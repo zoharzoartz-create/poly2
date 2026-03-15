@@ -1,38 +1,37 @@
 /**
+ * PolyTracker Pro — Render Edition
+ * קובץ יחיד, בדוק ונקי
+ */
 
-- PolyTracker Pro — Render Edition
-- קובץ יחיד, בדוק ונקי
-  */
+'use strict';
 
-‘use strict’;
-
-const express    = require(‘express’);
-const http       = require(‘http’);
-const WebSocket  = require(‘ws’);
-const axios      = require(‘axios’);
+const express    = require('express');
+const http       = require('http');
+const WebSocket  = require('ws');
+const axios      = require('axios');
 
 // ─────────────────────────────────────────────
 // ENV
 // ─────────────────────────────────────────────
 const ENV = {
-PORT:            process.env.PORT            || 3000,
-NEWS_API_KEY:    process.env.NEWS_API_KEY    || ‘’,
-OPENAI_KEY:      process.env.OPENAI_KEY      || ‘’,
-TELEGRAM_TOKEN:  process.env.TELEGRAM_TOKEN  || ‘’,
-TELEGRAM_CHAT:   process.env.TELEGRAM_CHAT_ID|| ‘’,
-POLYGON_RPC:     process.env.POLYGON_RPC     || ‘https://polygon-rpc.com’,
-WHALE_MIN:       Number(process.env.WHALE_MIN) || 10000,
+  PORT:            process.env.PORT            || 3000,
+  NEWS_API_KEY:    process.env.NEWS_API_KEY    || '',
+  OPENAI_KEY:      process.env.OPENAI_KEY      || '',
+  TELEGRAM_TOKEN:  process.env.TELEGRAM_TOKEN  || '',
+  TELEGRAM_CHAT:   process.env.TELEGRAM_CHAT_ID|| '',
+  POLYGON_RPC:     process.env.POLYGON_RPC     || 'https://polygon-rpc.com',
+  WHALE_MIN:       Number(process.env.WHALE_MIN) || 10000,
 };
 
 // ─────────────────────────────────────────────
 // STATE (declared before any usage)
 // ─────────────────────────────────────────────
 const state = {
-markets:  [],
-news:     [],
-wallets:  [],
-whaleCnt: 0,
-lastMarketFetch: 0,
+  markets:  [],
+  news:     [],
+  wallets:  [],
+  whaleCnt: 0,
+  lastMarketFetch: 0,
 };
 
 // ─────────────────────────────────────────────
@@ -43,309 +42,312 @@ const server = http.createServer(app);
 const wss    = new WebSocket.Server({ server });
 
 app.use(express.json());
-app.disable(‘x-powered-by’);
+app.disable('x-powered-by');
 
 // ─────────────────────────────────────────────
 // BROADCAST
 // ─────────────────────────────────────────────
 function broadcast(type, data) {
-const msg = JSON.stringify({ type, data, ts: Date.now() });
-wss.clients.forEach(c => {
-if (c.readyState === WebSocket.OPEN) {
-try { c.send(msg); } catch (_) {}
-}
-});
+  const msg = JSON.stringify({ type, data, ts: Date.now() });
+  wss.clients.forEach(c => {
+    if (c.readyState === WebSocket.OPEN) {
+      try { c.send(msg); } catch (_) {}
+    }
+  });
 }
 
 // ─────────────────────────────────────────────
 // WEBSOCKET
 // ─────────────────────────────────────────────
-wss.on(‘connection’, (ws, req) => {
-const ip = req.headers[‘x-forwarded-for’] || req.socket.remoteAddress;
-console.log(`[WS] Client connected from ${ip} | total: ${wss.clients.size}`);
+wss.on('connection', (ws, req) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  console.log(`[WS] Client connected from ${ip} | total: ${wss.clients.size}`);
 
-// שלח snapshot מיידי
-if (state.markets.length) ws.send(JSON.stringify({ type: ‘markets’, data: state.markets }));
-if (state.news.length)    ws.send(JSON.stringify({ type: ‘news’,    data: state.news    }));
-if (state.wallets.length) ws.send(JSON.stringify({ type: ‘wallets’, data: state.wallets }));
+  // שלח snapshot מיידי
+  if (state.markets.length) ws.send(JSON.stringify({ type: 'markets', data: state.markets }));
+  if (state.news.length)    ws.send(JSON.stringify({ type: 'news',    data: state.news    }));
+  if (state.wallets.length) ws.send(JSON.stringify({ type: 'wallets', data: state.wallets }));
 
-ws.on(‘error’, err => console.error(’[WS] Error:’, err.message));
-ws.on(‘close’, () => console.log(`[WS] Client disconnected | total: ${wss.clients.size}`));
+  ws.on('error', err => console.error('[WS] Error:', err.message));
+  ws.on('close', () => console.log(`[WS] Client disconnected | total: ${wss.clients.size}`));
 });
 
 // ─────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────
 function fmtUSD(n) {
-if (!n || isNaN(n)) return ‘$0’;
-if (n >= 1e9) return ‘$’ + (n / 1e9).toFixed(1) + ‘B’;
-if (n >= 1e6) return ‘$’ + (n / 1e6).toFixed(1) + ‘M’;
-if (n >= 1e3) return ‘$’ + (n / 1e3).toFixed(0) + ‘K’;
-return ‘$’ + Math.round(n);
+  if (!n || isNaN(n)) return '$0';
+  if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'K';
+  return '$' + Math.round(n);
 }
 
 function detectCategory(q) {
-q = (q || ‘’).toLowerCase();
-if (/bitcoin|crypto|eth\b|btc|solana|defi|nft|coin/.test(q))           return ‘crypto’;
-if (/trump|biden|election|congress|senate|president|white house/.test(q)) return ‘politics’;
-if (/fed\b|federal reserve|rate\b|inflation|recession|gdp|cpi/.test(q)) return ‘economy’;
-if (/ukraine|russia|nato|iran|war|ceasefire|missile|israel/.test(q))    return ‘geo’;
-if (/apple|nvidia|tesla|openai|ai\b|tech|software|microsoft/.test(q))   return ‘tech’;
-if (/nba|nfl|soccer|world cup|champion|sport|match|game/.test(q))       return ‘sports’;
-return ‘general’;
+  q = (q || '').toLowerCase();
+  if (/bitcoin|crypto|eth\b|btc|solana|defi|nft|coin/.test(q))           return 'crypto';
+  if (/trump|biden|election|congress|senate|president|white house/.test(q)) return 'politics';
+  if (/fed\b|federal reserve|rate\b|inflation|recession|gdp|cpi/.test(q)) return 'economy';
+  if (/ukraine|russia|nato|iran|war|ceasefire|missile|israel/.test(q))    return 'geo';
+  if (/apple|nvidia|tesla|openai|ai\b|tech|software|microsoft/.test(q))   return 'tech';
+  if (/nba|nfl|soccer|world cup|champion|sport|match|game/.test(q))       return 'sports';
+  return 'general';
 }
 
 function estimateImpact(title) {
-const t = (title || ‘’).toLowerCase();
-if (/breaking|federal reserve|fed rate|trump signs|bitcoin etf|ceasefire|nuclear|sanctions|crash/.test(t)) return ‘HIGH’;
-if (/report|data|market|economy|election|crypto|policy|rate|inflation/.test(t)) return ‘MEDIUM’;
-return ‘LOW’;
+  const t = (title || '').toLowerCase();
+  if (/breaking|federal reserve|fed rate|trump signs|bitcoin etf|ceasefire|nuclear|sanctions|crash/.test(t)) return 'HIGH';
+  if (/report|data|market|economy|election|crypto|policy|rate|inflation/.test(t)) return 'MEDIUM';
+  return 'LOW';
 }
 
 function findRelatedMarkets(title) {
-const t = (title || ‘’).toLowerCase();
-return [
-[‘bitcoin’,  ‘Bitcoin $150k’],
-[’fed ’,     ‘Fed rate cut’],
-[‘trump’,    ‘Trump executive order’],
-[‘ukraine’,  ‘Ukraine ceasefire’],
-[‘elon’,     ‘Elon DOGE’],
-[‘nvidia’,   ‘Nvidia $200’],
-[‘recession’,‘US Recession 2025’],
-[‘election’, ‘Election 2025’],
-].filter(([k]) => t.includes(k)).map(([, v]) => v);
+  const t = (title || '').toLowerCase();
+  return [
+    ['bitcoin',  'Bitcoin $150k'],
+    ['fed ',     'Fed rate cut'],
+    ['trump',    'Trump executive order'],
+    ['ukraine',  'Ukraine ceasefire'],
+    ['elon',     'Elon DOGE'],
+    ['nvidia',   'Nvidia $200'],
+    ['recession','US Recession 2025'],
+    ['election', 'Election 2025'],
+  ].filter(([k]) => t.includes(k)).map(([, v]) => v);
 }
 
 function scoreOpportunities() {
-const opps = state.markets
-.slice(0, 40)
-.map(m => {
-let score = 0;
-const factors = [];
-// נפח
-if (m.volume24h > 500000) { score += 30; factors.push(‘very_high_volume’); }
-else if (m.volume24h > 100000) { score += 20; factors.push(‘high_volume’); }
-else if (m.volume24h > 20000)  { score += 10; factors.push(‘med_volume’);  }
-// הסתברות קיצונית = edge פוטנציאלי
-const p = m.yesPrice;
-if (p < 0.12 || p > 0.88) { score += 35; factors.push(‘extreme_prob’); }
-else if (p < 0.22 || p > 0.78) { score += 20; factors.push(‘skewed_prob’); }
-else if (p < 0.32 || p > 0.68) { score += 10; factors.push(‘off_center’); }
-// ליקווידיטי
-if (m.liquidity > 100000) { score += 20; factors.push(‘great_liquidity’); }
-else if (m.liquidity > 30000) { score += 10; factors.push(‘ok_liquidity’); }
-const ev = p > 0.5 ? (p / 0.5).toFixed(2) : ((1 - p) / 0.5).toFixed(2);
-return {
-market:         m,
-score:          Math.min(score, 100),
-factors,
-expectedValue:  ev,
-recommendation: score >= 65 ? ‘STRONG BUY’ : score >= 45 ? ‘BUY’ : ‘WATCH’,
-type:           factors.includes(‘extreme_prob’) && m.volume24h > 50000 ? ‘HIGH_EDGE’ : ‘STANDARD’,
-};
-})
-.filter(o => o.score >= 35)
-.sort((a, b) => b.score - a.score)
-.slice(0, 9);
-if (opps.length) broadcast(‘opportunities’, opps);
-return opps;
+  const opps = state.markets
+    .slice(0, 40)
+    .map(m => {
+      let score = 0;
+      const factors = [];
+      // נפח
+      if (m.volume24h > 500000) { score += 30; factors.push('very_high_volume'); }
+      else if (m.volume24h > 100000) { score += 20; factors.push('high_volume'); }
+      else if (m.volume24h > 20000)  { score += 10; factors.push('med_volume');  }
+      // הסתברות קיצונית = edge פוטנציאלי
+      const p = m.yesPrice;
+      if (p < 0.12 || p > 0.88) { score += 35; factors.push('extreme_prob'); }
+      else if (p < 0.22 || p > 0.78) { score += 20; factors.push('skewed_prob'); }
+      else if (p < 0.32 || p > 0.68) { score += 10; factors.push('off_center'); }
+      // ליקווידיטי
+      if (m.liquidity > 100000) { score += 20; factors.push('great_liquidity'); }
+      else if (m.liquidity > 30000) { score += 10; factors.push('ok_liquidity'); }
+      const ev = p > 0.5 ? (p / 0.5).toFixed(2) : ((1 - p) / 0.5).toFixed(2);
+      return {
+        market:         m,
+        score:          Math.min(score, 100),
+        factors,
+        expectedValue:  ev,
+        recommendation: score >= 65 ? 'STRONG BUY' : score >= 45 ? 'BUY' : 'WATCH',
+        type:           factors.includes('extreme_prob') && m.volume24h > 50000 ? 'HIGH_EDGE' : 'STANDARD',
+      };
+    })
+    .filter(o => o.score >= 35)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 9);
+  if (opps.length) broadcast('opportunities', opps);
+  return opps;
 }
 
 // ─────────────────────────────────────────────
 // POLYMARKET FETCHER
 // ─────────────────────────────────────────────
 async function fetchMarkets() {
-try {
-const res = await axios.get(‘https://gamma-api.polymarket.com/markets’, {
-params: {
-active:    true,
-closed:    false,
-limit:     100,
-order:     ‘volume24hr’,
-ascending: false,
-},
-timeout: 12000,
-headers: { ‘User-Agent’: ‘PolyTrackerPro/1.0’ },
-});
+  try {
+    const res = await axios.get('https://gamma-api.polymarket.com/markets', {
+      params: {
+        active:    true,
+        closed:    false,
+        limit:     100,
+        order:     'volume24hr',
+        ascending: false,
+      },
+      timeout: 12000,
+      headers: { 'User-Agent': 'PolyTrackerPro/1.0' },
+    });
 
-```
-if (!Array.isArray(res.data)) throw new Error('Unexpected response shape');
+    if (!Array.isArray(res.data)) throw new Error('Unexpected response shape');
 
-state.markets = res.data.map(m => ({
-  id:        m.id,
-  slug:      m.slug || '',
-  question:  m.question || 'Unknown',
-  category:  detectCategory(m.question),
-  yesPrice:  parseFloat(m.outcomePrices?.[0]) || 0.5,
-  volume24h: parseFloat(m.volume24hr) || 0,
-  liquidity: parseFloat(m.liquidity)  || 0,
-  url:       `https://polymarket.com/event/${m.slug || m.id}`,
-}));
+    state.markets = res.data.map(m => ({
+      id:        m.id,
+      slug:      m.slug || '',
+      question:  m.question || 'Unknown',
+      category:  detectCategory(m.question),
+      yesPrice:  parseFloat(m.outcomePrices?.[0]) || 0.5,
+      volume24h: parseFloat(m.volume24hr) || 0,
+      liquidity: parseFloat(m.liquidity)  || 0,
+      url:       `https://polymarket.com/event/${m.slug || m.id}`,
+    }));
 
-state.lastMarketFetch = Date.now();
-broadcast('markets', state.markets.slice(0, 60));
-scoreOpportunities();
-console.log(`[POLY] ${state.markets.length} markets fetched`);
-```
-
-} catch (err) {
-console.error(’[POLY] Error:’, err.message);
-}
+    state.lastMarketFetch = Date.now();
+    broadcast('markets', state.markets.slice(0, 60));
+    scoreOpportunities();
+    console.log(`[POLY] ${state.markets.length} markets fetched`);
+  } catch (err) {
+    console.error('[POLY] Error:', err.message);
+  }
 }
 
 // ─────────────────────────────────────────────
 // NEWS FETCHER
 // ─────────────────────────────────────────────
 async function fetchNews() {
-if (!ENV.NEWS_API_KEY) {
-console.log(’[NEWS] No API key — skipping’);
-return;
-}
-try {
-const res = await axios.get(‘https://newsapi.org/v2/everything’, {
-params: {
-q:        ‘Federal Reserve OR Trump OR Bitcoin OR Ukraine OR “prediction market” OR Polymarket’,
-language: ‘en’,
-sortBy:   ‘publishedAt’,
-pageSize: 20,
-apiKey:   ENV.NEWS_API_KEY,
-},
-timeout: 10000,
-});
+  if (!ENV.NEWS_API_KEY) {
+    console.log('[NEWS] No API key — skipping');
+    return;
+  }
+  try {
+    const res = await axios.get('https://newsapi.org/v2/everything', {
+      params: {
+        q:        'Federal Reserve OR Trump OR Bitcoin OR Ukraine OR "prediction market" OR Polymarket',
+        language: 'en',
+        sortBy:   'publishedAt',
+        pageSize: 20,
+        apiKey:   ENV.NEWS_API_KEY,
+      },
+      timeout: 10000,
+    });
 
-```
-state.news = (res.data.articles || [])
-  .filter(a => a.title && !a.title.includes('[Removed]'))
-  .map(a => ({
-    title:           a.title,
-    source:          a.source?.name || 'Unknown',
-    url:             a.url,
-    publishedAt:     a.publishedAt,
-    impact:          estimateImpact(a.title),
-    relevantMarkets: findRelatedMarkets(a.title),
-  }));
+    state.news = (res.data.articles || [])
+      .filter(a => a.title && !a.title.includes('[Removed]'))
+      .map(a => ({
+        title:           a.title,
+        source:          a.source?.name || 'Unknown',
+        url:             a.url,
+        publishedAt:     a.publishedAt,
+        impact:          estimateImpact(a.title),
+        relevantMarkets: findRelatedMarkets(a.title),
+      }));
 
-broadcast('news', state.news);
+    broadcast('news', state.news);
 
-// התרעות HIGH IMPACT
-state.news
-  .filter(n => n.impact === 'HIGH')
-  .slice(0, 3)
-  .forEach(n => broadcast('news_alert', n));
+    // התרעות HIGH IMPACT
+    state.news
+      .filter(n => n.impact === 'HIGH')
+      .slice(0, 3)
+      .forEach(n => broadcast('news_alert', n));
 
-// Telegram
-const highItems = state.news.filter(n => n.impact === 'HIGH').slice(0, 2);
-for (const item of highItems) {
-  await tgSend(`📰 <b>HIGH IMPACT</b>\n${item.title}\n🎯 ${item.relevantMarkets.join(', ')}`);
-}
+    // Telegram
+    const highItems = state.news.filter(n => n.impact === 'HIGH').slice(0, 2);
+    for (const item of highItems) {
+      await tgSend(`📰 <b>HIGH IMPACT</b>\n${item.title}\n🎯 ${item.relevantMarkets.join(', ')}`);
+    }
 
-console.log(`[NEWS] ${state.news.length} articles fetched`);
-```
-
-} catch (err) {
-console.error(’[NEWS] Error:’, err.message);
-}
+    console.log(`[NEWS] ${state.news.length} articles fetched`);
+  } catch (err) {
+    console.error('[NEWS] Error:', err.message);
+  }
 }
 
 // ─────────────────────────────────────────────
 // WALLETS (The Graph)
 // ─────────────────────────────────────────────
 async function fetchWallets() {
-try {
-const query = `{ users( first: 20 orderBy: profit orderDirection: desc where: { numTrades_gt: "10" } ) { id numTrades profit collateralVolume } }`;
+  try {
+    const query = `{
+      users(
+        first: 20
+        orderBy: profit
+        orderDirection: desc
+        where: { numTrades_gt: "10" }
+      ) {
+        id
+        numTrades
+        profit
+        collateralVolume
+      }
+    }`;
 
-```
-const res = await axios.post(
-  'https://api.thegraph.com/subgraphs/name/polymarket/polymarket-matic',
-  { query },
-  {
-    timeout: 12000,
-    headers: { 'Content-Type': 'application/json' },
+    const res = await axios.post(
+      'https://api.thegraph.com/subgraphs/name/polymarket/polymarket-matic',
+      { query },
+      {
+        timeout: 12000,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+    const users = res.data?.data?.users;
+    if (!Array.isArray(users)) throw new Error('Bad Graph response');
+
+    state.wallets = users.map(u => {
+      const vol = parseFloat(u.collateralVolume) || 0;
+      const pnl = parseFloat(u.profit) || 0;
+      return {
+        address:      u.id,
+        shortAddress: u.id.slice(0, 6) + '...' + u.id.slice(-4),
+        trades:       parseInt(u.numTrades) || 0,
+        profit:       pnl,
+        volume:       vol,
+        roi:          vol > 0 ? Math.round((pnl / vol) * 100) : 0,
+      };
+    });
+
+    broadcast('wallets', state.wallets);
+    console.log(`[WALLETS] ${state.wallets.length} top wallets fetched`);
+  } catch (err) {
+    console.error('[WALLETS] Error:', err.message);
   }
-);
-
-const users = res.data?.data?.users;
-if (!Array.isArray(users)) throw new Error('Bad Graph response');
-
-state.wallets = users.map(u => {
-  const vol = parseFloat(u.collateralVolume) || 0;
-  const pnl = parseFloat(u.profit) || 0;
-  return {
-    address:      u.id,
-    shortAddress: u.id.slice(0, 6) + '...' + u.id.slice(-4),
-    trades:       parseInt(u.numTrades) || 0,
-    profit:       pnl,
-    volume:       vol,
-    roi:          vol > 0 ? Math.round((pnl / vol) * 100) : 0,
-  };
-});
-
-broadcast('wallets', state.wallets);
-console.log(`[WALLETS] ${state.wallets.length} top wallets fetched`);
-```
-
-} catch (err) {
-console.error(’[WALLETS] Error:’, err.message);
-}
 }
 
 // ─────────────────────────────────────────────
 // TELEGRAM
 // ─────────────────────────────────────────────
 async function tgSend(msg) {
-if (!ENV.TELEGRAM_TOKEN || !ENV.TELEGRAM_CHAT) return;
-try {
-await axios.post(
-`https://api.telegram.org/bot${ENV.TELEGRAM_TOKEN}/sendMessage`,
-{ chat_id: ENV.TELEGRAM_CHAT, text: msg, parse_mode: ‘HTML’ },
-{ timeout: 5000 }
-);
-} catch (err) {
-console.error(’[TG] Error:’, err.message);
-}
+  if (!ENV.TELEGRAM_TOKEN || !ENV.TELEGRAM_CHAT) return;
+  try {
+    await axios.post(
+      `https://api.telegram.org/bot${ENV.TELEGRAM_TOKEN}/sendMessage`,
+      { chat_id: ENV.TELEGRAM_CHAT, text: msg, parse_mode: 'HTML' },
+      { timeout: 5000 }
+    );
+  } catch (err) {
+    console.error('[TG] Error:', err.message);
+  }
 }
 
 // ─────────────────────────────────────────────
 // ROUTES
 // ─────────────────────────────────────────────
-app.get(’/’,           (_req, res) => res.send(DESKTOP_HTML));
-app.get(’/mobile’,     (_req, res) => res.send(MOBILE_HTML));
-app.get(’/api/health’, (_req, res) => res.json({
-status:   ‘ok’,
-markets:  state.markets.length,
-news:     state.news.length,
-wallets:  state.wallets.length,
-clients:  wss.clients.size,
-uptime:   Math.round(process.uptime()),
-lastFetch: new Date(state.lastMarketFetch).toISOString(),
+app.get('/',           (_req, res) => res.send(DESKTOP_HTML));
+app.get('/mobile',     (_req, res) => res.send(MOBILE_HTML));
+app.get('/api/health', (_req, res) => res.json({
+  status:   'ok',
+  markets:  state.markets.length,
+  news:     state.news.length,
+  wallets:  state.wallets.length,
+  clients:  wss.clients.size,
+  uptime:   Math.round(process.uptime()),
+  lastFetch: new Date(state.lastMarketFetch).toISOString(),
 }));
-app.get(’/api/markets’, (_req, res) => res.json(state.markets));
-app.get(’/api/news’,    (_req, res) => res.json(state.news));
+app.get('/api/markets', (_req, res) => res.json(state.markets));
+app.get('/api/news',    (_req, res) => res.json(state.news));
 
 // catch-all 404
-app.use((_req, res) => res.status(404).json({ error: ‘Not found’ }));
+app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 // ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
 server.listen(ENV.PORT, async () => {
-console.log(’\n══════════════════════════════════════’);
-console.log(’ 🚀  PolyTracker Pro — Render Edition’);
-console.log(‘══════════════════════════════════════’);
-console.log(` 📡  http://localhost:${ENV.PORT}`);
-console.log(` 📱  http://localhost:${ENV.PORT}/mobile`);
-console.log(` 💊  http://localhost:${ENV.PORT}/api/health`);
-console.log(‘──────────────────────────────────────’);
-console.log(` NEWS_API_KEY:   ${ENV.NEWS_API_KEY   ? '✅ set' : '❌ missing'}`);
-console.log(` OPENAI_KEY:     ${ENV.OPENAI_KEY     ? '✅ set' : '⚠️  optional'}`);
-console.log(` TELEGRAM_TOKEN: ${ENV.TELEGRAM_TOKEN ? '✅ set' : '⚠️  optional'}`);
-console.log(‘──────────────────────────────────────\n’);
+  console.log('\n══════════════════════════════════════');
+  console.log(' 🚀  PolyTracker Pro — Render Edition');
+  console.log('══════════════════════════════════════');
+  console.log(` 📡  http://localhost:${ENV.PORT}`);
+  console.log(` 📱  http://localhost:${ENV.PORT}/mobile`);
+  console.log(` 💊  http://localhost:${ENV.PORT}/api/health`);
+  console.log('──────────────────────────────────────');
+  console.log(` NEWS_API_KEY:   ${ENV.NEWS_API_KEY   ? '✅ set' : '❌ missing'}`);
+  console.log(` OPENAI_KEY:     ${ENV.OPENAI_KEY     ? '✅ set' : '⚠️  optional'}`);
+  console.log(` TELEGRAM_TOKEN: ${ENV.TELEGRAM_TOKEN ? '✅ set' : '⚠️  optional'}`);
+  console.log('──────────────────────────────────────\n');
 
-await fetchMarkets();
-await fetchNews();
-await fetchWallets();
+  await fetchMarkets();
+  await fetchNews();
+  await fetchWallets();
 
-console.log(’\n✅  PolyTracker Pro is LIVE!\n’);
+  console.log('\n✅  PolyTracker Pro is LIVE!\n');
 });
 
 // ─────────────────────────────────────────────
@@ -358,18 +360,17 @@ setInterval(fetchWallets,  10 * 60 * 1000);  // כל 10 דקות
 // ─────────────────────────────────────────────
 // ERROR HANDLING
 // ─────────────────────────────────────────────
-process.on(‘unhandledRejection’, (reason) => {
-console.error(’[FATAL] Unhandled rejection:’, reason);
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled rejection:', reason);
 });
-process.on(‘uncaughtException’, (err) => {
-console.error(’[FATAL] Uncaught exception:’, err.message);
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err.message);
 });
 
 // ─────────────────────────────────────────────
 // DESKTOP HTML (inline)
 // ─────────────────────────────────────────────
 const DESKTOP_HTML = `<!DOCTYPE html>
-
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -523,7 +524,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(2,4,8,.97);backdrop-fil
 <body>
 
 <!-- NOTIFICATION POPUP -->
-
 <div class="notif-pop" id="notifPop">
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;">
     <span id="np-icon" style="font-size:21px;"></span>
@@ -575,7 +575,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(2,4,8,.97);backdrop-fil
 <div class="main">
 
 <!-- OVERVIEW -->
-
 <div class="tc on" id="tab-overview">
   <div class="g4">
     <div class="card"><div class="c-lbl">💵 נפח 24h</div><div class="c-val" id="ov-vol">—</div></div>
@@ -601,7 +600,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(2,4,8,.97);backdrop-fil
 </div>
 
 <!-- MARKETS -->
-
 <div class="tc" id="tab-markets">
   <div class="filter-bar">
     <input class="search-inp" id="mkt-search" type="text" placeholder="🔍 חפש שוק..." oninput="renderAllMkts()">
@@ -621,7 +619,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(2,4,8,.97);backdrop-fil
 </div>
 
 <!-- WHALES -->
-
 <div class="tc" id="tab-whales">
   <div class="g4" style="margin-bottom:14px;">
     <div class="card"><div class="c-lbl">עסקאות</div><div class="c-val" style="font-size:22px;" id="wh-cnt">0</div></div>
@@ -634,7 +631,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(2,4,8,.97);backdrop-fil
 </div>
 
 <!-- ALERTS -->
-
 <div class="tc" id="tab-alerts">
   <div class="g4" style="margin-bottom:18px;">
     <div class="card"><div class="c-lbl">⚡ סה"כ</div><div class="c-val" style="color:var(--ac3)" id="al-total">0</div></div>
@@ -650,7 +646,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(2,4,8,.97);backdrop-fil
 </div>
 
 <!-- NEWS -->
-
 <div class="tc" id="tab-news">
   <div class="filter-bar">
     <button class="chip on" onclick="setChip(this,'all-n')">הכל</button>
@@ -665,7 +660,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(2,4,8,.97);backdrop-fil
 </div>
 
 <!-- OPPS -->
-
 <div class="tc" id="tab-opps">
   <div class="g4" style="margin-bottom:18px;">
     <div class="card" style="border-color:rgba(0,255,136,.3);"><div class="c-lbl" style="color:var(--ac)">✅ BUY YES</div><div class="c-val" id="op-yes">0</div></div>
@@ -679,7 +673,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(2,4,8,.97);backdrop-fil
 </div>
 
 <!-- WALLETS -->
-
 <div class="tc" id="tab-wallets">
   <div class="sec-h"><div class="sec-t">🏆 Top ROI Wallets</div><span style="font-size:11px;color:var(--tx2);">The Graph · Polygon</span></div>
   <div style="display:flex;flex-direction:column;gap:11px;" id="wallets-list">
@@ -1106,7 +1099,6 @@ setTimeout(pollREST, 1000);
 // עדכן REST כל 30 שניות כ-fallback
 setInterval(pollREST, 30000);
 </script>
-
 </body>
 </html>`;
 
@@ -1114,7 +1106,6 @@ setInterval(pollREST, 30000);
 // MOBILE HTML (inline)
 // ─────────────────────────────────────────────
 const MOBILE_HTML = `<!DOCTYPE html>
-
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
