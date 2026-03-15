@@ -39,10 +39,22 @@ const state = {
 // ─────────────────────────────────────────────
 const app    = express();
 const server = http.createServer(app);
-const wss    = new WebSocket.Server({ 
+const wss = new WebSocket.Server({ 
   server,
-  perMessageDeflate: false
+  perMessageDeflate: false,
+  clientTracking: true,
 });
+
+// Render WebSocket keepalive
+const wsInterval = setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (ws.isAlive === false) { ws.terminate(); return; }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
+
+wss.on('close', () => clearInterval(wsInterval));
 
 app.use(express.json());
 app.disable('x-powered-by');
@@ -67,6 +79,8 @@ function broadcast(type, data) {
 // WEBSOCKET
 // ─────────────────────────────────────────────
 wss.on('connection', (ws, req) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   console.log(`[WS] Client connected from ${ip} | total: ${wss.clients.size}`);
 
@@ -207,10 +221,11 @@ async function fetchNews() {
   try {
     const res = await axios.get('https://gnews.io/api/v4/search', {
   params: {
-    q:        'Polymarket OR Bitcoin OR "Federal Reserve" OR Trump OR Ukraine',
-    lang:     'en',
-    max:      10,
-    apikey:   ENV.NEWS_API_KEY,
+    q:       'Bitcoin OR Trump OR Ukraine',
+    lang:    'en',
+    country: 'us',
+    max:     10,
+    apikey:  ENV.NEWS_API_KEY,
   },
       timeout: 10000,
     });
