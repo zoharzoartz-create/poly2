@@ -205,7 +205,7 @@ async function fetchNews() {
     return;
   }
   try {
-    const res = await axios.get('https://newsapi.org/v2/everything', {
+    const res = await axios.get('https://gnews.io/api/v4/search', {
       params: {
         q:        'Federal Reserve OR Trump OR Bitcoin OR Ukraine OR "prediction market" OR Polymarket',
         language: 'en',
