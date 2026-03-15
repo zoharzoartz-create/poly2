@@ -39,11 +39,18 @@ const state = {
 // ─────────────────────────────────────────────
 const app    = express();
 const server = http.createServer(app);
-const wss    = new WebSocket.Server({ server });
+const wss    = new WebSocket.Server({ 
+  server,
+  perMessageDeflate: false
+});
 
 app.use(express.json());
 app.disable('x-powered-by');
-
+// Render WebSocket fix
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+});
 // ─────────────────────────────────────────────
 // BROADCAST
 // ─────────────────────────────────────────────
